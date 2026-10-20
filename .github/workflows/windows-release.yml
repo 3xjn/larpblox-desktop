@@ -79,9 +79,12 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
 
       - name: Build Windows installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: bun run tauri build --ci --bundles nsis --target x86_64-pc-windows-msvc -- --locked
 
-      - name: Publish installer only
+      - name: Publish installer and signed update manifest
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -89,12 +92,32 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $installers = @(Get-ChildItem -Path 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe' -File)
           if ($installers.Count -ne 1) { throw 'Expected exactly one Windows installer.' }
+          $installer = $installers[0]
+          $signaturePath = "$($installer.FullName).sig"
+          if (!(Test-Path -LiteralPath $signaturePath)) { throw 'Missing update signature.' }
+          $signature = (Get-Content -LiteralPath $signaturePath -Raw).Trim()
+          if (!$signature) { throw 'Empty update signature.' }
+          $manifest = @{
+            version = $env:RELEASE_TAG.Substring(1)
+            pub_date = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = @{
+              'windows-x86_64' = @{
+                signature = $signature
+                url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:RELEASE_TAG/$($installer.Name)"
+              }
+            }
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 latest.json
           gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json id *> $null
           if ($LASTEXITCODE -ne 0) {
-            $createArgs = @('release', 'create', $env:RELEASE_TAG, '--repo', $env:GITHUB_REPOSITORY, '--verify-tag', '--title', "Larpblox Desktop $($env:RELEASE_TAG.Substring(1))", '--generate-notes')
+            $createArgs = @('release', 'create', $env:RELEASE_TAG, '--repo', $env:GITHUB_REPOSITORY, '--verify-tag', '--draft', '--title', "Larpblox Desktop $($env:RELEASE_TAG.Substring(1))", '--generate-notes')
             if ($env:RELEASE_TAG.Contains('-')) { $createArgs += '--prerelease' }
             & gh @createArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          gh release upload $env:RELEASE_TAG $installers[0].FullName --repo $env:GITHUB_REPOSITORY --clobber
+          gh release upload $env:RELEASE_TAG $installer.FullName $signaturePath latest.json --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $publishArgs = @('release', 'edit', $env:RELEASE_TAG, '--repo', $env:GITHUB_REPOSITORY, '--draft=false')
+          if (!$env:RELEASE_TAG.Contains('-')) { $publishArgs += '--latest' }
+          & gh @publishArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

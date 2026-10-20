@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod bridge;
+mod updates;
 use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
@@ -69,10 +70,14 @@ fn main() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updates::PendingUpdate::default())
         .manage(bridge.clone())
         .invoke_handler(tauri::generate_handler![
             connection_status,
             retry_connection,
+            updates::check_for_updates,
+            updates::install_update,
             set_startup,
             minimize_to_tray,
             open_roblox,

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Larpblox",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "dev.3xjn.larpblox",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -27,11 +27,33 @@
   },
   "bundle": {
     "active": true,
-    "resources": { "../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt" },
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": {
+      "../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
+    },
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
     "windows": {
-      "nsis": { "installMode": "currentUser", "displayLanguageSelector": false }
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "windows": {
+        "installMode": "passive"
+      },
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDREQTI0QjBGRTZBMkI3MTgKUldRWXQ2TG1EMHVpVGFkbG13WG9ESEpoNElLMm9KV2NxWFhIOVE4UFJCNHlZdUdhVXE2TFNNVG0K",
+      "endpoints": [
+        "https://github.com/3xjn/larpblox-desktop/releases/latest/download/latest.json"
+      ]
     }
   }
 }

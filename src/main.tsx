@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/popover";
 import logo from "./assets/larpblox-logo.png";
 import "./styles.css";
+import { version } from "../package.json";
 
 type Status = {
   ready: boolean;
@@ -45,6 +46,30 @@ function App() {
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [updateState, setUpdateState] = useState<"idle" | "checking" | "available" | "installing" | "current" | "error">("idle");
+  const [updateVersion, setUpdateVersion] = useState("");
+  const [updateError, setUpdateError] = useState("");
+  async function checkForUpdates() {
+    setUpdateState("checking");
+    setUpdateError("");
+    try {
+      const available = await invoke<string | null>("check_for_updates");
+      setUpdateVersion(available || "");
+      setUpdateState(available ? "available" : "current");
+    } catch (cause) {
+      setUpdateError(String(cause));
+      setUpdateState("error");
+    }
+  }
+  async function installUpdate() {
+    setUpdateState("installing");
+    try {
+      await invoke("install_update");
+    } catch (cause) {
+      setUpdateError(String(cause));
+      setUpdateState("error");
+    }
+  }
   useEffect(() => {
     let active = true;
     const refresh = () =>
@@ -141,6 +166,21 @@ function App() {
                 aria-label="Start with Windows"
               />
             </label>
+            <Separator className="my-4" />
+            <div className="text-sm">Larpblox {version}</div>
+            <p role="status" className="mt-1 text-xs text-muted-foreground">
+              {updateState === "checking" ? "Checking for updates…" :
+               updateState === "installing" ? "Installing update. Larpblox will restart…" :
+               updateState === "available" ? `Version ${updateVersion} is available. Installation will restart Larpblox.` :
+               updateState === "current" ? "You’re up to date." : null}
+            </p>
+            {updateState === "error" && <p role="alert" className="mt-1 text-xs text-destructive-foreground">{updateError}</p>}
+            <Button className="mt-3 w-full" variant="outline" size="sm"
+              disabled={updateState === "checking" || updateState === "installing"}
+              onClick={updateState === "available" ? installUpdate : checkForUpdates}>
+              {(updateState === "checking" || updateState === "installing") && <LoaderCircle className="animate-spin" />}
+              {updateState === "available" ? "Install update" : updateState === "installing" ? "Installing…" : updateState === "checking" ? "Checking…" : "Check for updates"}
+            </Button>
           </PopoverPopup>
         </Popover>
       </header>
