@@ -17,6 +17,10 @@ fn connection_status(app: tauri::AppHandle, state: tauri::State<bridge::Shared>)
     status
 }
 #[tauri::command]
+async fn retry_connection(state: tauri::State<'_, bridge::Shared>) -> Result<(), String> {
+    bridge::serve(state.inner().clone()).await
+}
+#[tauri::command]
 fn set_startup(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     if enabled {
         app.autolaunch().enable()
@@ -68,6 +72,7 @@ fn main() {
         .manage(bridge.clone())
         .invoke_handler(tauri::generate_handler![
             connection_status,
+            retry_connection,
             set_startup,
             minimize_to_tray,
             open_roblox,

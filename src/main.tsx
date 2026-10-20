@@ -10,6 +10,7 @@ import {
   ArrowUpRight,
   LoaderCircle,
   Settings,
+  RotateCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -25,6 +26,7 @@ import "./styles.css";
 
 type Status = {
   ready: boolean;
+  starting: boolean;
   browsers: number;
   games: number;
   startup: boolean;
@@ -33,6 +35,7 @@ type Status = {
 function App() {
   const [status, setStatus] = useState<Status>({
     ready: false,
+    starting: true,
     browsers: 0,
     games: 0,
     startup: false,
@@ -41,6 +44,7 @@ function App() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   useEffect(() => {
     let active = true;
     const refresh = () =>
@@ -65,6 +69,22 @@ function App() {
       setError("");
     } catch {
       setError("That didn’t work. Please try again.");
+    }
+  }
+  async function retryConnection() {
+    setRetrying(true);
+    setError("");
+    try {
+      await invoke("retry_connection");
+    } catch (cause) {
+      setError(String(cause));
+    } finally {
+      try {
+        setStatus(await invoke<Status>("connection_status"));
+      } catch {
+        setError("Couldn’t read the connection. Please retry.");
+      }
+      setRetrying(false);
     }
   }
   async function copy() {
@@ -181,11 +201,11 @@ function App() {
         <Button
           className="w-full"
           size="lg"
-          disabled={!status.ready}
-          onClick={() => action("minimize_to_tray")}
+          disabled={retrying || status.starting || (!status.ready && !status.error)}
+          onClick={() => status.error ? retryConnection() : action("minimize_to_tray")}
         >
-          {!status.ready && <LoaderCircle className="animate-spin" />}
-          {status.ready ? "Run in background" : "Starting…"}
+          {retrying || status.starting ? <LoaderCircle className="animate-spin" /> : status.error ? <RotateCw /> : null}
+          {retrying || status.starting ? "Starting…" : status.error ? "Retry connection" : status.ready ? "Run in background" : "Starting…"}
         </Button>
         <p className="mt-3 text-center text-xs text-muted-foreground">
           Reopen or exit from the system tray.

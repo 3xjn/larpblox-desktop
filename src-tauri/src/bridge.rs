@@ -36,6 +36,7 @@ struct Inner {
     activity: HashMap<(String, String), Instant>,
     revision: u64,
     ready: bool,
+    starting: bool,
     error: Option<String>,
 }
 pub struct Bridge {
@@ -101,7 +102,7 @@ impl Bridge {
             );
             users.len()
         };
-        json!({"ready":inner.ready,"error":inner.error,"browsers":connected("browser"),"games":connected("game")})
+        json!({"ready":inner.ready,"starting":inner.starting,"error":inner.error,"browsers":connected("browser"),"games":connected("game")})
     }
     fn touch(&self, user: &str, channel: &str, method: &Method) {
         let role = if (method == Method::GET) == (channel == "game") {
@@ -469,7 +470,44 @@ async fn session(s: Shared, mut ws: WebSocket) {
     }
     s.inner.lock().unwrap().clients.remove(&key);
 }
-pub async fn serve(s: Shared) {
+async fn bind_listener(
+    s: &Shared,
+    address: std::net::SocketAddr,
+) -> Result<Option<tokio::net::TcpListener>, String> {
+    {
+        let mut inner = s.inner.lock().unwrap();
+        if inner.ready || inner.starting {
+            return Ok(None);
+        }
+        inner.starting = true;
+        inner.error = None;
+    }
+    let result = tokio::net::TcpListener::bind(address).await;
+    let mut inner = s.inner.lock().unwrap();
+    inner.starting = false;
+    match result {
+        Ok(listener) => {
+            inner.ready = true;
+            Ok(Some(listener))
+        }
+        Err(error) => {
+            let message = if error.kind() == std::io::ErrorKind::AddrInUse {
+                "Another app is using the local connection. Close that app, then retry."
+            } else {
+                "Couldn’t start the local connection. Please retry."
+            };
+            inner.ready = false;
+            inner.error = Some(message.into());
+            Err(message.into())
+        }
+    }
+}
+
+pub async fn serve(s: Shared) -> Result<(), String> {
+    let Some(listener) = bind_listener(&s, (std::net::Ipv4Addr::LOCALHOST, PORT).into()).await?
+    else {
+        return Ok(());
+    };
     let app = Router::new()
         .route("/v1/pair", get(pair))
         .route("/v1/status", get(status))
@@ -478,17 +516,13 @@ pub async fn serve(s: Shared) {
         .layer(DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn(guard))
         .with_state(s.clone());
-    match tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, PORT)).await {
-        Ok(listener) => {
-            s.inner.lock().unwrap().ready = true;
-            let _ = axum::serve(listener, app).await;
-        }
-        Err(_) => {
-            s.inner.lock().unwrap().error = Some(
-                "Another app is using the local connection. Close it and reopen Larpblox.".into(),
-            );
-        }
-    }
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+        let mut inner = s.inner.lock().unwrap();
+        inner.ready = false;
+        inner.error = Some("The local connection stopped. Please retry.".into());
+    });
+    Ok(())
 }
 
 #[cfg(test)]
@@ -508,6 +542,24 @@ mod tests {
             instance: "test".into(),
             inner: Mutex::new(Inner::default()),
         }
+    }
+    #[tokio::test]
+    async fn retries_after_port_is_released_and_ignores_duplicate_starts() {
+        let occupied = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = occupied.local_addr().unwrap();
+        let state = Arc::new(bridge());
+        assert!(bind_listener(&state, address).await.is_err());
+        assert_eq!(state.status()["ready"], false);
+        assert_eq!(state.status()["starting"], false);
+        assert!(state.status()["error"].is_string());
+        drop(occupied);
+        let listener = bind_listener(&state, address).await.unwrap().unwrap();
+        assert_eq!(state.status()["ready"], true);
+        assert!(state.status()["error"].is_null());
+        assert!(bind_listener(&state, address).await.unwrap().is_none());
+        drop(listener);
     }
     #[test]
     fn cleans_cosmetic_data_and_rejects_other_accounts() {

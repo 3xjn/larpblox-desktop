@@ -8,6 +8,8 @@ Development: install Rust, Windows C++ build tools, and Bun, then run `bun insta
 
 Use the cog to choose whether Larpblox starts with Windows. Closing the window keeps the connection running; choose Exit from the tray to stop it.
 
+If another app is using the local connection, close that app and click **Retry connection**. Larpblox retries without losing its saved pairing or restarting the desktop window.
+
 ## Windows releases
 
 The **Windows installer release** GitHub Actions workflow builds and uploads only the Windows x64 setup `.exe`. It runs when a `v*` tag is pushed, or manually from the Actions tab with an existing tag such as `v0.1.0`. Ordinary branch pushes do not start a Windows build.
