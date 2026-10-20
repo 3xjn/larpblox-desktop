@@ -1,0 +1,100 @@
+name: Windows installer release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to build, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          persist-credentials: false
+
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$') {
+            throw 'Select a version tag such as v0.1.0.'
+          }
+          git show-ref --verify --quiet "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw 'The selected ref must be an existing tag.' }
+          $expected = $env:RELEASE_TAG.Substring(1)
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoMatch = Select-String -Path src-tauri/Cargo.toml -Pattern '^version = "([^"]+)"$' | Select-Object -First 1
+          $cargoVersion = $cargoMatch.Matches[0].Groups[1].Value
+          if ($packageVersion -ne $expected -or $tauriVersion -ne $expected -or $cargoVersion -ne $expected) {
+            throw 'Tag, package.json, tauri.conf.json, and Cargo.toml versions must match.'
+          }
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.3.4'
+
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default 1.93.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: 'src-tauri -> target'
+
+      - name: Install locked frontend dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check and build frontend
+        run: bun run build
+
+      - name: Test desktop bridge
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+
+      - name: Build Windows installer
+        run: bun run tauri build --ci --bundles nsis --target x86_64-pc-windows-msvc -- --locked
+
+      - name: Publish installer only
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem -Path 'src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe' -File)
+          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows installer.' }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json id *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $createArgs = @('release', 'create', $env:RELEASE_TAG, '--repo', $env:GITHUB_REPOSITORY, '--verify-tag', '--title', "Larpblox Desktop $($env:RELEASE_TAG.Substring(1))", '--generate-notes')
+            if ($env:RELEASE_TAG.Contains('-')) { $createArgs += '--prerelease' }
+            & gh @createArgs
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          gh release upload $env:RELEASE_TAG $installers[0].FullName --repo $env:GITHUB_REPOSITORY --clobber
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
