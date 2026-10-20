@@ -2,7 +2,9 @@
 
 A Windows setup and tray app for the local Larpblox browser/game connection. Rust handles the loopback HTTP/WebSocket bridge; React and coss UI provide the setup window. Connections pair automatically. The app stays in the tray until you choose Exit.
 
-The extension lives in [larpblox-extension](https://github.com/3xjn/larpblox-extension). Shared appearance hosting is separate; the local bridge binds only to `127.0.0.1:38261` and does not send data to external servers.
+The extension lives in [larpblox-extension](https://github.com/3xjn/larpblox-extension). The local bridge binds only to `127.0.0.1:38261`. When sharing is enabled in the game, desktop connects to `wss://larp.3xjn.dev/v1/socket` and exchanges validated cosmetic records for that Roblox server. Sharing stops when disabled or when the game disconnects; desktop reconnects automatically after network interruptions.
+
+Sharing requires desktop 0.1.3 or newer and the current game script. Game appearance events travel over the existing localhost WebSocket; desktop pushes them to the relay and forwards incoming peer changes immediately. No extension update is required for this transport change. Pairing tokens stay on the local connection and are never sent to the public relay.
 
 Development: install Rust, Windows C++ build tools, and Bun, then run `bun install` and `bun run desktop`. `bun run package` builds the Windows installer. Lockfiles pin release dependencies.
 

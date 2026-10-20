@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod bridge;
+mod sharing;
 mod updates;
 use serde_json::{json, Value};
 use tauri::{

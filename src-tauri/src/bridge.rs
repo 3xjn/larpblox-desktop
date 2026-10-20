@@ -153,7 +153,7 @@ impl Bridge {
     }
 }
 
-fn id(value: &str) -> bool {
+pub(crate) fn id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 16
         && !value.starts_with('0')
@@ -167,7 +167,7 @@ fn asset(value: &Value) -> bool {
         .as_u64()
         .is_some_and(|n| n > 0 && n < 9_007_199_254_740_992)
 }
-fn valid_image(value: &str) -> bool {
+pub(crate) fn valid_image(value: &str) -> bool {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     value.len() <= 2048
         && RE
@@ -177,7 +177,7 @@ fn valid_image(value: &str) -> bool {
             })
             .is_match(value)
 }
-fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &'static str> {
+pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &'static str> {
     let bad = "Invalid appearance data";
     if value["version"] != 1 || value["userId"].as_str() != Some(user) {
         return Err(bad);
@@ -338,7 +338,7 @@ async fn status(State(s): State<Shared>, headers: HeaderMap) -> Response {
     if !auth_header(&s, &headers) {
         return error(StatusCode::UNAUTHORIZED);
     }
-    Json(json!({"version":1,"connected":true,"websocket":true,"instanceId":s.instance}))
+    Json(json!({"version":1,"connected":true,"websocket":true,"sharing":true,"instanceId":s.instance}))
         .into_response()
 }
 fn auth_header(s: &Bridge, h: &HeaderMap) -> bool {
@@ -408,6 +408,8 @@ async fn session(s: Shared, mut ws: WebSocket) {
     }
     let key = Uuid::new_v4();
     let (tx, mut rx) = mpsc::channel::<Value>(32);
+    let (sharing_tx, sharing_rx) = tokio::sync::watch::channel(None);
+    let sharing_task = tokio::spawn(super::sharing::run(sharing_rx, tx.clone()));
     let initial = {
         let mut inner = s.inner.lock().unwrap();
         if inner.clients.len() >= MAX_CLIENTS {
@@ -438,7 +440,7 @@ async fn session(s: Shared, mut ws: WebSocket) {
     let (mut out, mut input) = ws.split();
     let _ = out
         .send(Message::Text(
-            json!({"type":"ready","instanceId":s.instance})
+            json!({"type":"ready","sharing":true,"instanceId":s.instance})
                 .to_string()
                 .into(),
         ))
@@ -459,7 +461,13 @@ async fn session(s: Shared, mut ws: WebSocket) {
             message=tokio::time::timeout(Duration::from_secs(60),input.next())=>{
                 let text=match message {Ok(Some(Ok(Message::Text(t))))=>t,Ok(Some(Ok(Message::Ping(p))))=>{if out.send(Message::Pong(p)).await.is_err(){break}continue},Ok(Some(Ok(Message::Pong(_))))=>continue,_=>break};
                 let value=match serde_json::from_str::<Value>(&text){Ok(v)=>v,Err(_)=>break};
-                let response=if value["type"]=="ping" {json!({"type":"pong"})} else {
+                let response=if value["type"]=="ping" {json!({"type":"pong"})}
+                else if value["type"]=="sharing" && role=="game" {
+                    match super::sharing::Session::parse(&value["value"], &user) {
+                        Ok(next)=>{sharing_tx.send_replace(next);json!({"type":"ack","channel":"sharing"})},
+                        Err(message)=>json!({"type":"state","channel":"shared","value":{"type":"status","message":message}})
+                    }
+                } else {
                     let channel=value["channel"].as_str().unwrap_or("");
                     if value["type"]!="publish" || !(if role=="game" {channel=="game"}else{["browser","names","image"].contains(&channel)}) {json!({"type":"error","error":"Invalid channel"})}
                     else {match s.publish(channel,&value["value"],&user){Ok(v)=>json!({"type":"ack","channel":channel,"value":v}),Err(_)=>json!({"type":"error","error":"Invalid appearance data"})}}
@@ -469,6 +477,8 @@ async fn session(s: Shared, mut ws: WebSocket) {
         }
     }
     s.inner.lock().unwrap().clients.remove(&key);
+    drop(sharing_tx);
+    sharing_task.abort();
 }
 async fn bind_listener(
     s: &Shared,
