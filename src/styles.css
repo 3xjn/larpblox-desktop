@@ -1,0 +1,86 @@
+@import "tailwindcss";
+@custom-variant dark (&:is(.dark *));
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-popover: var(--card);
+  --color-popover-foreground: var(--foreground);
+  --font-sans: "Segoe UI Variable", "Segoe UI", sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+}
+:root {
+  color-scheme: dark;
+  --background: #111112;
+  --foreground: #ededee;
+  --card: #19191b;
+  --primary: #ededee;
+  --primary-foreground: #18181b;
+  --secondary: #262629;
+  --secondary-foreground: #ededee;
+  --muted: #232326;
+  --muted-foreground: #929298;
+  --accent: #2b2b30;
+  --accent-foreground: #f5f5f5;
+  --border: #303034;
+  --input: #37373c;
+  --ring: #bdbdc4;
+  --destructive: #a22;
+  --destructive-foreground: #fecaca;
+  --success: #183a2b;
+  --success-foreground: #86d9a3;
+  --warning: #3b311c;
+  --warning-foreground: #d5bb75;
+  --info: #1a2942;
+  --info-foreground: #93b8ef;
+}
+* {
+  box-sizing: border-box;
+  border-color: var(--border);
+}
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+}
+
+.dark {
+  --destructive-foreground: var(--color-red-400);
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-400);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-400);
+  --warning: var(--color-amber-500);
+  --warning-foreground: var(--color-amber-400);
+}
