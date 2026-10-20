@@ -131,67 +131,44 @@ function App() {
           </h1>
         </div>
         <div className="overflow-hidden rounded-xl border bg-card">
-          <div className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex size-8 items-center justify-center">
-                <Chrome className="size-5 text-muted-foreground" />
-              </div>
-              <div className="flex-1 text-sm font-medium">Browser</div>
-              <span
-                role="status"
-                className={`flex items-center gap-1.5 text-xs ${status.browsers ? "text-success-foreground" : "text-muted-foreground"}`}
-              >
-                {status.browsers > 0 && <Check className="size-3.5" />}
-                {status.browsers ? "Connected" : "Not connected"}
-              </span>
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <p className="max-w-52 text-xs leading-relaxed text-muted-foreground">
-                {status.browsers
-                  ? "Your extension is connected."
-                  : "Open Roblox in Chrome."}
+          <div className="flex min-h-24 items-center gap-4 px-5 py-5">
+            <Chrome
+              className={`size-5 shrink-0 transition-colors ${status.browsers ? "text-success-foreground" : "text-muted-foreground"}`}
+            />
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-medium">Browser</h2>
+              <p role="status" className="mt-1 text-xs text-muted-foreground">
+                {status.browsers ? "Connected" : "Open Roblox to connect."}
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => action("open_roblox")}
-              >
-                Open
-                <ArrowUpRight />
-              </Button>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => action("open_roblox")}
+            >
+              Open <ArrowUpRight />
+            </Button>
           </div>
           <Separator />
-          <div className="p-4">
-            <div className="flex items-center gap-3">
-              <div className="flex size-8 items-center justify-center">
-                <Gamepad2 className="size-5 text-muted-foreground" />
-              </div>
-              <div className="flex-1 text-sm font-medium">Game</div>
-              <span
-                role="status"
-                className={`flex items-center gap-1.5 text-xs ${status.games ? "text-success-foreground" : "text-muted-foreground"}`}
-              >
-                {status.games > 0 && <Check className="size-3.5" />}
-                {status.games ? "Connected" : "Not connected"}
-              </span>
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-2">
-              <p className="max-w-52 text-xs leading-relaxed text-muted-foreground">
-                {status.games
-                  ? "Your game is ready to sync."
-                  : "Run Larpblox in your game."}
+          <div className="flex min-h-24 items-center gap-4 px-5 py-5">
+            <Gamepad2
+              className={`size-5 shrink-0 transition-colors ${status.games ? "text-success-foreground" : "text-muted-foreground"}`}
+            />
+            <div className="min-w-0 flex-1">
+              <h2 className="text-sm font-medium">Game</h2>
+              <p role="status" className="mt-1 text-xs text-muted-foreground">
+                {status.games ? "Connected" : "Run Larpblox to connect."}
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="min-w-24"
-                onClick={copy}
-              >
-                {copied ? <Check /> : <Copy />}
-                {copied ? "Copied" : "Copy script"}
-              </Button>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="min-w-24"
+              onClick={copy}
+            >
+              {copied ? <Check /> : <Copy />}
+              {copied ? "Copied" : "Copy script"}
+            </Button>
           </div>
         </div>
       </section>

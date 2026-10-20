@@ -15,7 +15,7 @@ use serde_json::{json, Map, Value};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -33,6 +33,7 @@ struct Client {
 struct Inner {
     values: HashMap<(String, String), Value>,
     clients: HashMap<Uuid, Client>,
+    activity: HashMap<(String, String), Instant>,
     revision: u64,
     ready: bool,
     error: Option<String>,
@@ -84,7 +85,38 @@ impl Bridge {
     }
     pub fn status(&self) -> Value {
         let inner = self.inner.lock().unwrap();
-        json!({"ready":inner.ready,"error":inner.error,"browsers":inner.clients.values().filter(|c|c.role=="browser").count(),"games":inner.clients.values().filter(|c|c.role=="game").count()})
+        let connected = |role: &str| {
+            let mut users: HashSet<&str> = inner
+                .clients
+                .values()
+                .filter(|c| c.role == role)
+                .map(|c| c.user.as_str())
+                .collect();
+            users.extend(
+                inner
+                    .activity
+                    .iter()
+                    .filter(|((_, r), time)| r == role && time.elapsed() < Duration::from_secs(15))
+                    .map(|((user, _), _)| user.as_str()),
+            );
+            users.len()
+        };
+        json!({"ready":inner.ready,"error":inner.error,"browsers":connected("browser"),"games":connected("game")})
+    }
+    fn touch(&self, user: &str, channel: &str, method: &Method) {
+        let role = if (method == Method::GET) == (channel == "game") {
+            "browser"
+        } else {
+            "game"
+        };
+        let mut inner = self.inner.lock().unwrap();
+        inner
+            .activity
+            .retain(|_, time| time.elapsed() < Duration::from_secs(15));
+        let key = (user.to_owned(), role.to_owned());
+        if inner.activity.len() < 64 || inner.activity.contains_key(&key) {
+            inner.activity.insert(key, Instant::now());
+        }
     }
     fn publish(&self, channel: &str, value: &Value, user: &str) -> Result<Value, &'static str> {
         let mut value = clean(channel, value, user)?;
@@ -327,6 +359,7 @@ async fn http(
     if !id(&user) || !["game", "browser", "names", "image"].contains(&channel.as_str()) {
         return error(StatusCode::NOT_FOUND);
     }
+    s.touch(&user, &channel, &method);
     if method == Method::GET {
         return s
             .inner
@@ -515,6 +548,19 @@ mod tests {
             "7"
         )
         .is_err());
+    }
+    #[test]
+    fn http_fallback_counts_as_connected_and_expires() {
+        let s = bridge();
+        s.touch("7", "game", &Method::POST);
+        s.touch("7", "game", &Method::GET);
+        assert_eq!(s.status()["games"], 1);
+        assert_eq!(s.status()["browsers"], 1);
+        for time in s.inner.lock().unwrap().activity.values_mut() {
+            *time = Instant::now() - Duration::from_secs(16);
+        }
+        assert_eq!(s.status()["games"], 0);
+        assert_eq!(s.status()["browsers"], 0);
     }
     #[tokio::test]
     async fn isolates_accounts_and_routes_roles() {

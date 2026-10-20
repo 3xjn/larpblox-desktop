@@ -15,7 +15,7 @@
         "label": "main",
         "title": "Larpblox",
         "width": 460,
-        "height": 480,
+        "height": 440,
         "resizable": false,
         "theme": "Dark",
         "center": true
@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "resources": { "../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt" },
     "targets": ["nsis"],
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "windows": {
