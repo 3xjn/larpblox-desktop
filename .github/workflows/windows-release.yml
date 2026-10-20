@@ -110,7 +110,7 @@ jobs:
           $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 latest.json
           gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json id *> $null
           if ($LASTEXITCODE -ne 0) {
-            $createArgs = @('release', 'create', $env:RELEASE_TAG, '--repo', $env:GITHUB_REPOSITORY, '--verify-tag', '--draft', '--title', "Larpblox Desktop $($env:RELEASE_TAG.Substring(1))", '--generate-notes')
+            $createArgs = @('release', 'create', $env:RELEASE_TAG, '--repo', $env:GITHUB_REPOSITORY, '--verify-tag', '--draft', '--title', "Larpblox Desktop $($env:RELEASE_TAG.Substring(1))", '--notes', 'Larpblox desktop update.')
             if ($env:RELEASE_TAG.Contains('-')) { $createArgs += '--prerelease' }
             & gh @createArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
