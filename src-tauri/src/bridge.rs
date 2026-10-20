@@ -306,9 +306,12 @@ async fn guard(req: axum::extract::Request, next: Next) -> Response {
     let extension = origin
         .and_then(|o| o.strip_prefix("chrome-extension://"))
         .is_some_and(|o| o.len() == 32 && o.bytes().all(|b| (b'a'..=b'p').contains(&b)));
-    if origin.is_some_and(|o| o != "http://127.0.0.1:38261" && o != "http://localhost:38261")
-        && !extension
-    {
+    let local_http =
+        origin.is_some_and(|o| ["http://127.0.0.1:38261", "http://localhost:38261"].contains(&o));
+    // Volt supplies a ws:// Origin. Permit it only on the local upgrade path.
+    let local_websocket = req.uri().path() == "/v1/socket"
+        && origin.is_some_and(|o| ["ws://127.0.0.1:38261", "ws://localhost:38261"].contains(&o));
+    if origin.is_some() && !local_http && !local_websocket && !extension {
         return error(StatusCode::FORBIDDEN);
     }
     if req.uri().path() == "/v1/pair"
