@@ -52,6 +52,12 @@ impl Session {
             return Err("Invalid shared name");
         }
         let mut cleaned = json!({"version":1,"userId":user,"snapshot":snapshot,"name":name});
+        if let Some(verified) = record.get("verified") {
+            if !verified.is_boolean() {
+                return Err("Invalid sharing identity");
+            }
+            cleaned["verified"] = verified.clone();
+        }
         if let Some(image) = record.get("imageUrl") {
             if !image.as_str().is_some_and(super::bridge::valid_image) {
                 return Err("Invalid shared image");
@@ -148,5 +154,33 @@ pub(crate) async fn run(mut changes: watch::Receiver<Option<Session>>, tx: mpsc:
             result=changes.changed()=>{if result.is_err(){return}}
         }
         retry = (retry * 2).min(15);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot() -> Value {
+        json!({"version":1,"userId":"7","definition":{
+            "assets":[{"id":123}],
+            "bodyColors":{"headColor":"ffffff","torsoColor":"ffffff","leftArmColor":"ffffff","rightArmColor":"ffffff","leftLegColor":"ffffff","rightLegColor":"ffffff"},
+            "scales":{},"playerAvatarType":{"playerAvatarType":"R15"}},
+            "items":[]})
+    }
+
+    #[test]
+    fn preserves_verified_flag_and_rejects_invalid_type() {
+        for verified in [false, true] {
+            let value = json!({"enabled":true,"placeId":"123","jobId":"job-1","record":{
+                "version":1,"userId":"7","verified":verified,"snapshot":snapshot(),
+                "name":{"enabled":true,"username":"Player","displayName":"Player"}}});
+            let session = Session::parse(&value, "7").unwrap().unwrap();
+            assert_eq!(session.record["verified"], verified);
+        }
+        let invalid = json!({"enabled":true,"placeId":"123","jobId":"job-1","record":{
+            "version":1,"userId":"7","verified":"yes","snapshot":snapshot(),
+            "name":{"enabled":true,"username":"Player","displayName":"Player"}}});
+        assert!(Session::parse(&invalid, "7").is_err());
     }
 }

@@ -191,7 +191,16 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
         {
             return Err(bad);
         }
-        return Ok(json!({"version":1,"userId":user,"enabled":value["enabled"],"name":name}));
+        let mut result = json!({"version":1,"userId":user,"enabled":value["enabled"],"name":name});
+        for key in ["sharing", "verified"] {
+            if let Some(flag) = value.get(key) {
+                if !flag.is_boolean() {
+                    return Err(bad);
+                }
+                result[key] = flag.clone();
+            }
+        }
+        return Ok(result);
     }
     let definition = value["definition"].as_object().ok_or(bad)?;
     let assets = definition
@@ -613,6 +622,24 @@ mod tests {
             "7"
         )
         .is_err());
+    }
+    #[test]
+    fn preserves_optional_name_flags_and_rejects_invalid_types() {
+        for verified in [false, true] {
+            let cleaned = clean(
+                "names",
+                &json!({"version":1,"userId":"7","enabled":true,"name":"Valid_Name","sharing":true,"verified":verified}),
+                "7",
+            )
+            .unwrap();
+            assert_eq!(cleaned["sharing"], true);
+            assert_eq!(cleaned["verified"], verified);
+        }
+        for key in ["sharing", "verified"] {
+            let mut value = json!({"version":1,"userId":"7","enabled":true,"name":"Valid_Name"});
+            value[key] = json!("yes");
+            assert!(clean("names", &value, "7").is_err());
+        }
     }
     #[test]
     fn http_fallback_counts_as_connected_and_expires() {
