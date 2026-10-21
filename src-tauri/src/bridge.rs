@@ -191,7 +191,14 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
         {
             return Err(bad);
         }
-        return Ok(json!({"version":1,"userId":user,"enabled":value["enabled"],"name":name}));
+        let mut names = json!({"version":1,"userId":user,"enabled":value["enabled"],"name":name});
+        if let Some(sharing) = value.get("sharing") {
+            if !sharing.is_boolean() {
+                return Err(bad);
+            }
+            names["sharing"] = sharing.clone();
+        }
+        return Ok(names);
     }
     let definition = value["definition"].as_object().ok_or(bad)?;
     let assets = definition
