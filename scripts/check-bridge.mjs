@@ -132,8 +132,23 @@ try {
     (await (await request("/v1/names/7", { headers })).json()).name,
     marker,
   );
+  const outfit = {version:1,userId:"7",items:[],backgroundId:42,backgrounds:[{id:42,name:"Test background"}],definition:{
+    assets:[],bodyColors:Object.fromEntries(["head","torso","leftArm","rightArm","leftLeg","rightLeg"].map(part=>[part+"Color","ffffff"])),
+    scales:{},playerAvatarType:{playerAvatarType:"R15"}}};
+  for (const backgroundId of [42,0]) {
+    outfit.backgroundId=backgroundId;
+    const response=await request("/v1/browser/7",{method:"POST",headers,body:JSON.stringify(outfit)});
+    assert.equal(response.status,200);
+    await until(()=>game.received.some(message=>message.channel==="browser" && message.value.backgroundId===backgroundId));
+    const pushed=game.received.find(message=>message.channel==="browser" && message.value.backgroundId===backgroundId).value;
+    assert.deepEqual(pushed.backgrounds,outfit.backgrounds);
+    assert.equal(pushed.definition.backgroundRequestModel?.id,backgroundId || undefined);
+    game.socket.send(JSON.stringify({type:"publish",channel:"game",value:{...outfit,definition:pushed.definition}}));
+    await until(()=>browser.received.some(message=>message.channel==="game" && message.value.backgroundId===backgroundId));
+    assert.equal((await (await request("/v1/game/7",{headers})).json()).backgroundId,backgroundId);
+  }
   console.log(
-    "Passed: pairing, authentication, origin/host guards, body limit, account isolation, role checks, WebSocket delivery and HTTP reads.",
+    "Passed: pairing, guards, account isolation, WebSocket delivery, HTTP reads, and background selection/removal round trips.",
   );
 } finally {
   for (const client of [game, browser, other]) client.socket.close();

@@ -269,7 +269,52 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
         return Err(bad);
     }
     d.insert("playerAvatarType".into(), json!({"playerAvatarType":rig}));
+    let background = value
+        .get("backgroundId")
+        .or_else(|| definition.get("backgroundId"))
+        .or_else(|| {
+            definition
+                .get("backgroundRequestModel")
+                .and_then(|v| v.get("id"))
+        });
+    if let Some(id) = background {
+        if id != &json!(0) && !asset(id) {
+            return Err(bad);
+        }
+        if id != &json!(0) {
+            d.insert("backgroundId".into(), id.clone());
+            d.insert("backgroundRequestModel".into(), json!({"id":id}));
+        }
+    }
     let mut result = json!({"version":1,"userId":user,"definition":d});
+    if let Some(id) = background {
+        result["backgroundId"] = id.clone();
+    }
+    if let Some(collection) = value.get("backgrounds") {
+        let entries = collection.as_array().ok_or(bad)?;
+        if entries.len() > 100 {
+            return Err(bad);
+        }
+        let mut seen = HashSet::new();
+        let mut backgrounds = Vec::new();
+        for entry in entries {
+            let name = entry["name"].as_str().ok_or(bad)?;
+            if !asset(&entry["id"])
+                || !seen.insert(entry["id"].as_u64().ok_or(bad)?)
+                || name.chars().count() > 128
+                || name.chars().any(char::is_control)
+            {
+                return Err(bad);
+            }
+            backgrounds.push(json!({"id":entry["id"],"name":name}));
+        }
+        if let Some(id) = background.filter(|id| *id != &json!(0)) {
+            if !seen.contains(&id.as_u64().ok_or(bad)?) {
+                return Err(bad);
+            }
+        }
+        result["backgrounds"] = json!(backgrounds);
+    }
     if channel == "image" {
         let url = value["imageUrl"].as_str().ok_or(bad)?;
         if !valid_image(url) {
@@ -595,6 +640,34 @@ mod tests {
         assert!(clean("game", &value, "8").is_err());
         value["definition"]["scales"]["height"] = json!(6);
         assert!(clean("game", &value, "7").is_err());
+    }
+    #[test]
+    fn preserves_background_selection_removal_and_collection() {
+        let mut value = sample("7");
+        value["backgroundId"] = json!(75789087422384_u64);
+        value["backgrounds"] = json!([{"id":75789087422384_u64,"name":"Cat","private":"discard"}]);
+        for channel in ["browser", "game"] {
+            let cleaned = clean(channel, &value, "7").unwrap();
+            assert_eq!(cleaned["backgroundId"], value["backgroundId"]);
+            assert_eq!(
+                cleaned["definition"]["backgroundRequestModel"]["id"],
+                value["backgroundId"]
+            );
+            assert!(cleaned["backgrounds"][0].get("private").is_none());
+        }
+        value["backgroundId"] = json!(0);
+        let cleared = clean("browser", &value, "7").unwrap();
+        assert_eq!(cleared["backgroundId"], 0);
+        assert!(cleared["definition"]
+            .get("backgroundRequestModel")
+            .is_none());
+        value["backgroundId"] = json!(-1);
+        assert!(clean("browser", &value, "7").is_err());
+        value["backgroundId"] = json!(42);
+        assert!(clean("browser", &value, "7").is_err());
+        value["backgroundId"] = json!(0);
+        value["backgrounds"] = json!([{"id":42,"name":"A"},{"id":42,"name":"B"}]);
+        assert!(clean("browser", &value, "7").is_err());
     }
     #[test]
     fn rejects_unsafe_images_and_names() {

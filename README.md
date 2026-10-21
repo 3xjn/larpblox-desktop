@@ -1,5 +1,7 @@
 # Larpblox Desktop
 
+Version 0.1.7 keeps background selections and removals in sync between the extension and game, including the collected background list.
+
 A Windows setup and tray app for the local Larpblox browser/game connection. Rust handles the loopback HTTP/WebSocket bridge; React and coss UI provide the setup window. Connections pair automatically. The app stays in the tray until you choose Exit.
 
 The extension lives in [larpblox-extension](https://github.com/3xjn/larpblox-extension). The local bridge binds only to `127.0.0.1:38261`. When sharing is enabled in the game, desktop connects to `wss://larp.3xjn.dev/v1/socket` and exchanges validated cosmetic records for that Roblox server. Sharing stops when disabled or when the game disconnects; desktop reconnects automatically after network interruptions.
