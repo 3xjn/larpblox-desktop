@@ -29,12 +29,14 @@ struct Client {
     role: String,
     tx: mpsc::Sender<Value>,
     avatar_lookup: bool,
+    client_requests: bool,
 }
 struct AvatarLookup {
     browser: Uuid,
     game: Uuid,
     request_id: String,
     target: String,
+    generic: bool,
 }
 #[derive(Default)]
 struct Inner {
@@ -202,9 +204,92 @@ impl Bridge {
                 game,
                 request_id: request_id.into(),
                 target: target.into(),
+                generic: false,
             },
         );
         Ok(key)
+    }
+    fn start_client_request(&self, browser: Uuid, value: &Value) -> Result<Uuid, &'static str> {
+        let request_id = value["id"]
+            .as_str()
+            .filter(|v| Uuid::parse_str(v).is_ok())
+            .ok_or("Invalid client request")?;
+        let method = value["method"]
+            .as_str()
+            .filter(|v| {
+                !v.is_empty()
+                    && v.len() <= 64
+                    && v.bytes().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'.' || c == b'_'
+                    })
+            })
+            .ok_or("Invalid client method")?;
+        let params = value["params"]
+            .as_object()
+            .filter(|v| serde_json::to_vec(v).is_ok_and(|v| v.len() <= 65536))
+            .ok_or("Invalid client parameters")?;
+        let mut inner = self.inner.lock().unwrap();
+        let user = &inner
+            .clients
+            .get(&browser)
+            .filter(|c| c.role == "browser")
+            .ok_or("Invalid client request")?
+            .user;
+        if inner.avatar_lookups.len() >= 32
+            || inner
+                .avatar_lookups
+                .values()
+                .filter(|v| v.browser == browser)
+                .count()
+                >= 4
+        {
+            return Err("A client request is already pending. Try again shortly.");
+        }
+        let (&game, client) = inner
+            .clients
+            .iter()
+            .find(|(_, c)| c.user == *user && c.role == "game" && c.client_requests)
+            .ok_or("Connect your game and reload the Larpblox interface.")?;
+        let key = Uuid::new_v4();
+        client.tx.try_send(json!({"type":"client-request","id":key.to_string(),"method":method,"params":params})).map_err(|_|"The game connection is busy. Try again.")?;
+        inner.avatar_lookups.insert(
+            key,
+            AvatarLookup {
+                browser,
+                game,
+                request_id: request_id.into(),
+                target: String::new(),
+                generic: true,
+            },
+        );
+        Ok(key)
+    }
+    fn finish_client_request(&self, game: Uuid, value: &Value) -> Result<(), &'static str> {
+        let key = value["id"]
+            .as_str()
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or("Invalid client response")?;
+        let mut inner = self.inner.lock().unwrap();
+        let Some(request) = inner.avatar_lookups.get(&key) else {
+            return Ok(());
+        };
+        if request.game != game || !request.generic {
+            return Err("Invalid client response");
+        }
+        let response = if value["ok"] == true {
+            json!({"type":"client-result","id":request.request_id,"ok":true,"result":value["result"]})
+        } else {
+            let message = value["error"]
+                .as_str()
+                .filter(|v| v.len() <= 256 && !v.chars().any(char::is_control))
+                .unwrap_or("The client request failed.");
+            json!({"type":"client-result","id":request.request_id,"ok":false,"error":message})
+        };
+        let request = inner.avatar_lookups.remove(&key).unwrap();
+        if let Some(client) = inner.clients.get(&request.browser) {
+            let _ = client.tx.try_send(response);
+        }
+        Ok(())
     }
     fn finish_avatar_lookup(&self, game: Uuid, value: &Value) -> Result<(), &'static str> {
         let key = value["id"]
@@ -215,7 +300,7 @@ impl Bridge {
         let Some(request) = inner.avatar_lookups.get(&key) else {
             return Ok(());
         };
-        if request.game != game {
+        if request.game != game || request.generic {
             return Err("Invalid avatar response");
         }
         let response = if value["ok"] == true {
@@ -239,7 +324,14 @@ impl Bridge {
         let mut inner = self.inner.lock().unwrap();
         if let Some(request) = inner.avatar_lookups.remove(&key) {
             if let Some(client) = inner.clients.get(&request.browser) {
-                let _ = client.tx.try_send(json!({"type":"avatar-lookup-result","id":request.request_id,"ok":false,"error":message}));
+                let kind = if request.generic {
+                    "client-result"
+                } else {
+                    "avatar-lookup-result"
+                };
+                let _ = client.tx.try_send(
+                    json!({"type":kind,"id":request.request_id,"ok":false,"error":message}),
+                );
             }
         }
     }
@@ -586,6 +678,7 @@ async fn session(s: Shared, mut ws: WebSocket) {
                 role: role.clone(),
                 tx,
                 avatar_lookup: auth["avatarLookup"] == true,
+                client_requests: auth["clientRequests"] == true,
             },
         );
         inner
@@ -605,7 +698,7 @@ async fn session(s: Shared, mut ws: WebSocket) {
     let (mut out, mut input) = ws.split();
     let _ = out
         .send(Message::Text(
-            json!({"type":"ready","sharing":true,"avatarLookup":true,"instanceId":s.instance})
+            json!({"type":"ready","sharing":true,"avatarLookup":true,"clientRequests":true,"instanceId":s.instance})
                 .to_string()
                 .into(),
         ))
@@ -632,6 +725,13 @@ async fn session(s: Shared, mut ws: WebSocket) {
                         Ok(next)=>{sharing_tx.send_replace(next);json!({"type":"ack","channel":"sharing"})},
                         Err(message)=>json!({"type":"state","channel":"shared","value":{"type":"status","message":message}})
                     }
+                } else if value["type"]=="client-request" && role=="browser" {
+                    match s.start_client_request(key,&value) {
+                        Ok(request)=>{let state=s.clone();tokio::spawn(async move {tokio::time::sleep(Duration::from_secs(30)).await;state.cancel_avatar_lookup(request,"The client request timed out. Try again.");});continue},
+                        Err(message)=>json!({"type":"client-result","id":value["id"],"ok":false,"error":message})
+                    }
+                } else if value["type"]=="client-result" && role=="game" {
+                    match s.finish_client_request(key,&value){Ok(())=>continue,Err(message)=>json!({"type":"error","error":message})}
                 } else if value["type"]=="avatar-lookup" && role=="browser" {
                     match s.start_avatar_lookup(key, &value) {
                         Ok(request)=>{let state=s.clone();tokio::spawn(async move {tokio::time::sleep(Duration::from_secs(30)).await;state.cancel_avatar_lookup(request,"The client avatar lookup timed out. Try again.");});continue},
@@ -857,6 +957,7 @@ mod tests {
                     role: "game".into(),
                     tx: same,
                     avatar_lookup: false,
+                    client_requests: false,
                 },
             );
             inner.clients.insert(
@@ -866,6 +967,7 @@ mod tests {
                     role: "game".into(),
                     tx: other,
                     avatar_lookup: false,
+                    client_requests: false,
                 },
             );
             inner.clients.insert(
@@ -875,6 +977,7 @@ mod tests {
                     role: "browser".into(),
                     tx: source,
                     avatar_lookup: false,
+                    client_requests: false,
                 },
             );
         }
@@ -905,6 +1008,7 @@ mod tests {
                     role: "browser".into(),
                     tx: browser_tx,
                     avatar_lookup: false,
+                    client_requests: false,
                 },
             );
             inner.clients.insert(
@@ -914,6 +1018,7 @@ mod tests {
                     role: "game".into(),
                     tx: game_tx,
                     avatar_lookup: true,
+                    client_requests: true,
                 },
             );
             inner.clients.insert(
@@ -923,6 +1028,7 @@ mod tests {
                     role: "game".into(),
                     tx: other_tx,
                     avatar_lookup: true,
+                    client_requests: true,
                 },
             );
         }
@@ -981,6 +1087,33 @@ mod tests {
             browser_rx.try_recv().is_err(),
             "late duplicate results are ignored"
         );
+        let client_id = Uuid::new_v4();
+        let client_key=s.start_client_request(browser,&json!({"id":client_id.to_string(),"method":"future.feature","params":{"value":42}})).unwrap();
+        let request = game_rx.try_recv().unwrap();
+        assert_eq!(request["method"], "future.feature");
+        assert_eq!(request["params"]["value"], 42);
+        assert!(s
+            .finish_client_request(
+                other,
+                &json!({"id":client_key.to_string(),"ok":true,"result":42})
+            )
+            .is_err());
+        s.finish_client_request(
+            game,
+            &json!({"id":client_key.to_string(),"ok":true,"result":{"value":42}}),
+        )
+        .unwrap();
+        let response = browser_rx.try_recv().unwrap();
+        assert_eq!(response["type"], "client-result");
+        assert_eq!(response["id"], client_id.to_string());
+        assert_eq!(response["result"]["value"], 42);
+        assert!(s
+            .start_client_request(
+                browser,
+                &json!({"id":client_id.to_string(),"method":"eval()","params":{}})
+            )
+            .is_err());
+        assert!(s.start_client_request(browser,&json!({"id":client_id.to_string(),"method":"valid.method","params":"not an object"})).is_err());
         let key = s
             .start_avatar_lookup(
                 browser,

@@ -11,7 +11,7 @@ async function connect(userId,role){
   const timer=setTimeout(()=>reject(Error('Timed out waiting for avatar relay')),3000);waiters.push({predicate,resolve:value=>{clearTimeout(timer);resolve(value)}});
  })};clients.push(result);
  socket.addEventListener('message',event=>{const value=JSON.parse(event.data);messages.push(value);for(const waiter of [...waiters])if(waiter.predicate(value)){waiters.splice(waiters.indexOf(waiter),1);waiter.resolve(value)}});
- socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'auth',version:1,token:pair.code,userId,role,avatarLookup:role==='game'})));
+  socket.addEventListener('open',()=>socket.send(JSON.stringify({type:'auth',version:1,token:pair.code,userId,role,avatarLookup:role==='game',clientRequests:role==='game'})));
  const ready=await result.next(m=>m.type==='ready');assert.equal(ready.avatarLookup,true,'desktop must advertise native lookup support');return result;
 }
 try{
@@ -23,6 +23,10 @@ try{
  game.socket.send(JSON.stringify({type:'avatar-lookup-result',id:request.id,ok:true,snapshot}));
  const response=await browser.next(m=>m.type==='avatar-lookup-result'&&m.id===requestId);assert.equal(response.ok,true);assert.equal(response.snapshot.definition.playerAvatarType.playerAvatarType,'R6');assert.equal(response.snapshot.items[0].id,123);
  assert.equal(response.targetUserId,'99');assert.equal(browser.messages.some(m=>m.channel==='game'&&m.value?.items?.[0]?.id===123),false,'lookup cannot equip its result');
+ const genericId=randomUUID();browser.socket.send(JSON.stringify({type:'client-request',id:genericId,method:'future.feature',params:{value:42}}));
+ const generic=await game.next(m=>m.type==='client-request');assert.equal(generic.params.value,42);
+ game.socket.send(JSON.stringify({type:'client-result',id:generic.id,ok:true,result:{value:42}}));
+ const genericResponse=await browser.next(m=>m.type==='client-result'&&m.id===genericId);assert.equal(genericResponse.result.value,42);
  const second=randomUUID();browser.socket.send(JSON.stringify({type:'avatar-lookup',id:second,targetUserId:'99'}));await game.next(m=>m.type==='avatar-lookup'&&m.id!==request.id);game.socket.close();
  const interrupted=await browser.next(m=>m.id===second);assert.equal(interrupted.ok,false);assert.match(interrupted.error,/disconnected/);
  console.log('PASS: installed desktop relays correlated avatar data, isolates accounts, leaves saved outfits untouched, and reports client disconnect.');
