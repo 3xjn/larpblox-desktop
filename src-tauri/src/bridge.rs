@@ -415,7 +415,7 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
         let mut safe = json!({"id":a["id"]});
         if let Some(meta) = a.get("meta").filter(|m| !m.is_null()) {
             let mut m = Map::new();
-            for key in ["order", "puffiness"] {
+            for key in ["order", "puffiness", "version"] {
                 if let Some(number) = meta.get(key) {
                     if !number
                         .as_f64()
@@ -424,6 +424,23 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
                         return Err(bad);
                     }
                     m.insert(key.into(), number.clone());
+                }
+            }
+            for (key, min, max) in [
+                ("position", -10.0, 10.0),
+                ("rotation", -360.0, 360.0),
+                ("scale", 0.000001, 5.0),
+            ] {
+                if let Some(vector) = meta.get(key) {
+                    let mut safe_vector = Map::new();
+                    for axis in ["X", "Y", "Z"] {
+                        let value = vector.get(axis).ok_or(bad)?;
+                        if !value.as_f64().is_some_and(|n| n.is_finite() && (min..=max).contains(&n)) {
+                            return Err(bad);
+                        }
+                        safe_vector.insert(axis.into(), value.clone());
+                    }
+                    m.insert(key.into(), Value::Object(safe_vector));
                 }
             }
             safe["meta"] = Value::Object(m);
