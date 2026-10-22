@@ -231,6 +231,15 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
                     m.insert(key.into(), number.clone());
                 }
             }
+            if let Some(style) = meta.get("smokestackStyle") {
+                if a["id"].as_u64() != Some(169444515)
+                    || !["auto", "normal", "halloween", "thanksgiving", "christmas", "birthday", "stpatricks", "valentines", "aprilfools"]
+                        .contains(&style.as_str().ok_or(bad)?)
+                {
+                    return Err(bad);
+                }
+                m.insert("smokestackStyle".into(), style.clone());
+            }
             safe["meta"] = Value::Object(m);
         }
         safe_assets.push(safe);
@@ -598,6 +607,20 @@ mod tests {
         assert_eq!(cleaned["definition"]["bodyColors"]["headColor"], "ffffff");
         assert!(clean("game", &value, "8").is_err());
         value["definition"]["scales"]["height"] = json!(6);
+        assert!(clean("game", &value, "7").is_err());
+    }
+    #[test]
+    fn validates_smokestack_style_for_its_asset() {
+        let mut value = sample("7");
+        value["definition"]["assets"][0] = json!({"id":169444515,"meta":{"order":2,"smokestackStyle":"halloween"}});
+        let cleaned = clean("game", &value, "7").unwrap();
+        assert_eq!(cleaned["definition"]["assets"][0]["meta"]["smokestackStyle"], "halloween");
+        for style in [json!("unknown"), json!(1)] {
+            value["definition"]["assets"][0]["meta"]["smokestackStyle"] = style;
+            assert!(clean("game", &value, "7").is_err());
+        }
+        value["definition"]["assets"][0]["id"] = json!(123);
+        value["definition"]["assets"][0]["meta"]["smokestackStyle"] = json!("normal");
         assert!(clean("game", &value, "7").is_err());
     }
     #[test]
