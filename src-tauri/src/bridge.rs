@@ -383,14 +383,18 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
     }
     if channel == "names" {
         let name = value["name"].as_str().ok_or(bad)?;
+        let display_name = value["displayName"].as_str().unwrap_or(name);
         if !value["enabled"].is_boolean()
             || (!name.is_empty()
                 && (!(3..=20).contains(&name.len())
                     || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')))
+            || (value["enabled"] == true && display_name.is_empty())
+            || display_name.chars().count() > 50
+            || display_name.chars().any(char::is_control)
         {
             return Err(bad);
         }
-        let mut result = json!({"version":1,"userId":user,"enabled":value["enabled"],"name":name});
+        let mut result = json!({"version":1,"userId":user,"enabled":value["enabled"],"name":name,"displayName":display_name});
         for key in ["sharing", "verified"] {
             if let Some(flag) = value.get(key) {
                 if !flag.is_boolean() {
@@ -921,6 +925,18 @@ mod tests {
             "7"
         )
         .is_ok());
+        let cleaned = clean(
+            "names",
+            &json!({"version":1,"userId":"7","enabled":true,"name":"Valid_Name","displayName":"Friendly"}),
+            "7",
+        )
+        .unwrap();
+        assert_eq!(cleaned["displayName"], "Friendly");
+        assert!(clean(
+            "names",
+            &json!({"version":1,"userId":"7","enabled":true,"name":"Valid_Name","displayName":""}),
+            "7",
+        ).is_err());
         assert!(clean(
             "names",
             &json!({"version":1,"userId":"7","enabled":true,"name":"Bad Name"}),
