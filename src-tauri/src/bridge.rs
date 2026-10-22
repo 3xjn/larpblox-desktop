@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 pub const PORT: u16 = 38261;
 const MAX_BODY: usize = 256 * 1024;
+const MAX_ASSET_COUNT: usize = 512;
 const MAX_CLIENTS: usize = 32;
 
 struct Client {
@@ -410,7 +411,7 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
         .get("assets")
         .and_then(Value::as_array)
         .ok_or(bad)?;
-    if assets.len() > 100 || assets.iter().any(|a| !asset(&a["id"])) {
+    if assets.len() > MAX_ASSET_COUNT || assets.iter().any(|a| !asset(&a["id"])) {
         return Err(bad);
     }
     let mut d = Map::new();
@@ -543,7 +544,7 @@ pub(crate) fn clean(channel: &str, value: &Value, user: &str) -> Result<Value, &
         result["imageUrl"] = json!(url);
     } else {
         let items = value["items"].as_array().ok_or(bad)?;
-        if items.len() > 100 {
+        if items.len() > MAX_ASSET_COUNT {
             return Err(bad);
         }
         let mut safe_items = Vec::new();
@@ -875,6 +876,18 @@ mod tests {
         assert_eq!(cleaned["definition"]["bodyColors"]["headColor"], "ffffff");
         assert!(clean("game", &value, "8").is_err());
         value["definition"]["scales"]["height"] = json!(6);
+        assert!(clean("game", &value, "7").is_err());
+    }
+    #[test]
+    fn accepts_bounded_asset_transport_capacity() {
+        let mut value = sample("7");
+        value["items"] = json!((1..=512).map(|id| json!({"id":id,"name":"Item","itemType":"Asset","assetType":8})).collect::<Vec<_>>());
+        value["definition"]["assets"] = json!((1..=512).map(|id| json!({"id":id})).collect::<Vec<_>>());
+        assert!(clean("game", &value, "7").is_ok());
+        value["items"].as_array_mut().unwrap().push(json!({"id":513,"name":"Item","itemType":"Asset","assetType":8}));
+        assert!(clean("game", &value, "7").is_err());
+        value["items"].as_array_mut().unwrap().pop();
+        value["definition"]["assets"].as_array_mut().unwrap().push(json!({"id":513}));
         assert!(clean("game", &value, "7").is_err());
     }
     #[test]

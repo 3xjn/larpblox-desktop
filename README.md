@@ -1,6 +1,6 @@
 # Larpblox Desktop
 
-Version 0.1.7 keeps background selections and removals in sync between the extension and game, including the collected background list.
+Version 0.1.11 carries up to 512 avatar items and assets through the local bridge and relay.
 
 A Windows setup and tray app for the local Larpblox browser/game connection. Rust handles the loopback HTTP/WebSocket bridge; React and coss UI provide the setup window. Connections pair automatically. The app stays in the tray until you choose Exit.
 
