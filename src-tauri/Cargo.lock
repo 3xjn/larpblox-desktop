@@ -2207,7 +2207,7 @@ dependencies = [
 
 [[package]]
 name = "larpblox-desktop"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "axum",
  "futures-util",

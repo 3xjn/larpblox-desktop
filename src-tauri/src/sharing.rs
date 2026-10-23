@@ -1,6 +1,7 @@
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
+use std::collections::HashSet;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::{
     connect_async_with_config,
@@ -64,6 +65,9 @@ impl Session {
             }
             cleaned["imageUrl"] = image.clone();
         }
+        if let Some(hat_scripts) = record.get("hatScripts") {
+            cleaned["hatScripts"] = clean_hat_scripts(hat_scripts)?;
+        }
         Ok(Some(Self {
             user: user.into(),
             place: place.into(),
@@ -71,6 +75,74 @@ impl Session {
             record: cleaned,
         }))
     }
+}
+
+fn clean_hat_scripts(value: &Value) -> Result<Value, &'static str> {
+    let object = value.as_object().ok_or("Invalid hat scripts")?;
+    if object.get("version") != Some(&json!(1)) {
+        return Err("Invalid hat scripts");
+    }
+    let session = object.get("session").and_then(Value::as_str).ok_or("Invalid hat scripts")?;
+    if session.len() != 36 || !session.bytes().all(|byte| byte.is_ascii_hexdigit() || byte == b'-') {
+        return Err("Invalid hat scripts");
+    }
+    let held = object.get("held").and_then(Value::as_str).ok_or("Invalid hat scripts")?;
+    if !matches!(held, "" | "award" | "doom") {
+        return Err("Invalid hat scripts");
+    }
+    let events = object.get("events").and_then(Value::as_array).ok_or("Invalid hat scripts")?;
+    if events.len() > 16 {
+        return Err("Invalid hat scripts");
+    }
+    let kinds = ["turret-fire", "doom-satellite", "doom-beam", "doom-vanish", "doom-stop", "award-burst", "award-gild"];
+    let mut ids = HashSet::new();
+    let satellite = match object.get("satellite") {
+        Some(Value::Array(position)) if position.len() == 3 && position.iter().all(|value| value.as_f64().is_some_and(|number| number.is_finite() && number.abs() <= 1_000_000.0)) => Some(position),
+        Some(_) => return Err("Invalid hat scripts"),
+        None => None,
+    };
+    let mut clean_events = Vec::with_capacity(events.len());
+    for event in events {
+        let event = event.as_object().ok_or("Invalid hat event")?;
+        let id = event.get("id").and_then(Value::as_u64).filter(|id| *id > 0 && *id <= 9_007_199_254_740_991).ok_or("Invalid hat event")?;
+        if !ids.insert(id) {
+            return Err("Invalid hat event");
+        }
+        let kind = event.get("kind").and_then(Value::as_str).filter(|kind| kinds.contains(kind)).ok_or("Invalid hat event")?;
+        let at = event.get("at").and_then(Value::as_u64).filter(|at| *at > 0 && *at <= 9_007_199_254_740_991).ok_or("Invalid hat event")?;
+        let target = event.get("target");
+        let target = match target {
+            Some(Value::String(target)) if !target.is_empty() && target.len() <= 16 && target.bytes().all(|byte| byte.is_ascii_digit()) && !target.starts_with('0') => Some(target),
+            Some(_) => return Err("Invalid hat event"),
+            None => None,
+        };
+        if kind == "turret-fire" && target.is_none() {
+            return Err("Invalid hat event");
+        }
+        let position = event.get("position");
+        let needs_position = matches!(kind, "doom-satellite" | "doom-beam" | "doom-vanish" | "award-gild");
+        let position = match position {
+            Some(Value::Array(position)) if position.len() == 3 && position.iter().all(|value| value.as_f64().is_some_and(|number| number.is_finite() && number.abs() <= 1_000_000.0)) => Some(position),
+            Some(_) => return Err("Invalid hat event"),
+            None if needs_position => return Err("Invalid hat event"),
+            None => None,
+        };
+        let mut clean = json!({"id": id, "kind": kind, "at": at});
+        if let Some(target) = target { clean["target"] = json!(target); }
+        if let Some(position) = position { clean["position"] = json!(position); }
+        clean_events.push(clean);
+    }
+    let mut clean = json!({"version": 1, "session": session, "held": held, "events": clean_events});
+    if let Some(satellite) = satellite { clean["satellite"] = json!(satellite); }
+    Ok(clean)
+}
+
+fn same_without_hat_scripts(left: &Value, right: &Value) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    if let Some(object) = left.as_object_mut() { object.remove("hatScripts"); }
+    if let Some(object) = right.as_object_mut() { object.remove("hatScripts"); }
+    left == right
 }
 
 fn forward(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), ()> {
@@ -114,7 +186,15 @@ pub(crate) async fn run(mut changes: watch::Receiver<Option<Session>>, tx: mpsc:
                             let Some(next)=next else {break};
                             if next.user!=current.user || next.place!=current.place || next.job!=current.job {break}
                             if next.record!=current.record {
-                                if socket.send(Message::Text(json!({"type":"publish","record":next.record}).to_string().into())).await.is_err(){break}
+                                let compact_hat = next.record.get("hatScripts").is_some()
+                                    && current.record.get("hatScripts") != next.record.get("hatScripts")
+                                    && same_without_hat_scripts(&current.record, &next.record);
+                                let message = if compact_hat {
+                                    json!({"type":"hat-scripts","hatScripts":next.record["hatScripts"]})
+                                } else {
+                                    json!({"type":"publish","record":next.record})
+                                };
+                                if socket.send(Message::Text(message.to_string().into())).await.is_err(){break}
                             }
                             current=next;
                         }
@@ -128,7 +208,7 @@ pub(crate) async fn run(mut changes: watch::Receiver<Option<Session>>, tx: mpsc:
                                     received=Instant::now();
                                     if text.len()>4*1024*1024 {break}
                                     let Ok(event)=serde_json::from_str::<Value>(&text) else {break};
-                                    if ["snapshot","upsert","remove"].contains(&event["type"].as_str().unwrap_or("")) {
+                                    if ["snapshot","upsert","remove","hat-scripts"].contains(&event["type"].as_str().unwrap_or("")) {
                                         retry=1;
                                         if forward(&tx,event).is_err(){break}
                                     }
@@ -182,5 +262,43 @@ mod tests {
             "version":1,"userId":"7","verified":"yes","snapshot":snapshot(),
             "name":{"enabled":true,"username":"Player","displayName":"Player"}}});
         assert!(Session::parse(&invalid, "7").is_err());
+    }
+
+    #[test]
+    fn preserves_sanitized_hat_scripts_and_legacy_records() {
+        let mut value = json!({"enabled":true,"placeId":"123","jobId":"job-1","record":{
+            "version":1,"userId":"7","snapshot":snapshot(),
+            "name":{"enabled":true,"username":"Player","displayName":"Player"}}});
+        assert!(Session::parse(&value, "7").unwrap().unwrap().record.get("hatScripts").is_none());
+        value["record"]["hatScripts"] = json!({"version":1,"session":"01234567-89ab-cdef-0123-456789abcdef","held":"doom",
+            "satellite":[1,-2.5,3],"events":[{"id":1,"kind":"doom-beam","at":1700000000,"position":[4,5,6],"target":"7","script":"discard"}]});
+        let session = Session::parse(&value, "7").unwrap().unwrap();
+        assert_eq!(session.record["hatScripts"]["events"][0], json!({"id":1,"kind":"doom-beam","at":1700000000,"target":"7","position":[4,5,6]}));
+        assert_eq!(session.record["hatScripts"]["satellite"], json!([1,-2.5,3]));
+        for invalid in [
+            json!({"version":1,"session":"short","held":"doom","events":[]}),
+            json!({"version":1,"session":"01234567-89ab-cdef-0123-456789abcdef","held":"doom","events":[{"id":1,"kind":"turret-fire","at":1}]}),
+            json!({"version":1,"session":"01234567-89ab-cdef-0123-456789abcdef","held":"doom","events":[{"id":1,"kind":"doom-beam","at":1,"position":[0,0]}]}),
+        ] {
+            value["record"]["hatScripts"] = invalid;
+            assert!(Session::parse(&value, "7").is_err());
+        }
+    }
+
+    #[test]
+    fn compact_hat_delta_only_matches_hat_changes() {
+        let base = json!({"version":1,"userId":"7","snapshot":snapshot(),"hatScripts":{"version":1,"session":"01234567-89ab-cdef-0123-456789abcdef","held":"","events":[]}});
+        let mut hats = base.clone();
+        hats["hatScripts"]["held"] = json!("doom");
+        assert!(same_without_hat_scripts(&base, &hats));
+        let mut appearance = hats.clone();
+        appearance["userId"] = json!("8");
+        assert!(!same_without_hat_scripts(&base, &appearance));
+        let duplicate = json!({"version":1,"session":"01234567-89ab-cdef-0123-456789abcdef","held":"","events":[
+            {"id":1,"kind":"doom-stop","at":1},{"id":1,"kind":"doom-stop","at":2}]});
+        assert!(clean_hat_scripts(&duplicate).is_err());
+        let oversized = json!({"version":1,"session":"01234567-89ab-cdef-0123-456789abcdef","held":"","events":
+            (0..17).map(|id| json!({"id":id + 1,"kind":"doom-stop","at":1})).collect::<Vec<_>>()});
+        assert!(clean_hat_scripts(&oversized).is_err());
     }
 }
